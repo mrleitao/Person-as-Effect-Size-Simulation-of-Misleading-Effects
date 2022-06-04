@@ -1,0 +1,259 @@
+---
+title: "Simulation of Misleading Effects"
+author: "Matthew Leitao & Kathryn Berluti"
+date: "5/31/2022"
+output:
+   html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading Packages
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+if(!require(tidyverse))  {install.packages("tidyverse")}
+if(!require(psych))  {install.packages("psych")}
+if(!require(ggplot2))  {install.packages("ggplot2")}
+if(!require(afex))  {install.packages("afex")}
+if(!require(ggpubr))  {install.packages("ggpubr")}
+if(!require(reshape))  {install.packages("reshape")}
+if(!require(ggpubr))  {install.packages("ggpubr")}
+if(!require(ggsci))  {install.packages("ggsci")}
+if(!require(rstatix))  {install.packages("rstatix")}
+if(!require(readr))  {install.packages("readr")}
+```
+
+# Creating random differences between two groups
+We are going with a 30:60:10 ratio spread but you can mess around with different ratios and different spreads. I chose these means and standard deviations to mimic a data set with I recently collected, and to show that if error was equally distributed that this data set is no different than most data sets we may see in the wild (or in the lab).
+
+We are start creating "wide" data where both conditions values will be on the same row, and then pivot the data set "long" so each condition and value gets it's own row.
+
+##Positive
+
+```{r}
+Pos <- rnorm(30, mean = 2, sd = 1)
+#Ensuring no negative values
+Pos <- pmax(Pos, .0001)
+describe(Pos)
+```
+
+##Equal
+```{r}
+Equal <- rnorm(60, mean = 0, sd = 0)
+describe(Equal)
+```
+
+
+##Negative
+```{r}
+Neg <- rnorm(10, mean = -2, sd = 1)
+# ensuring no positive values
+Neg <- pmin(Neg, -.0001)
+
+describe(Neg)
+```
+
+# Combining and Creatting Dataset
+## Concatenating the Values
+```{r}
+Difference <- c(Pos, Equal, Neg)
+```
+
+## Creating the Baseline Data
+
+The data we are using as our base is random distribution centered on 5. In this instance doesn't have a ceiling or floor. With all of these demonstration we could have set a max or min value to represent the kind of scale that psychologists and other data scientists may collect but for the sake of demonstration we opted for a clean distribution that doesn't violate assumptions.
+```{r}
+Algorithm <- rnorm(100, mean = 5, sd = 1.5)
+describe(Algorithm)
+```
+
+## Binding the Data
+```{r}
+SampleData <- as.data.frame(cbind(Algorithm, Difference))
+
+summary(SampleData)
+```
+
+### Density Plot Algorithm Trust
+```{r}
+ggplot(data = SampleData, aes(Algorithm)) + geom_density(fill = "#568EA6") + theme_classic()
+```
+
+## Creating the comparison value
+
+Our combination value is the combination of our baseline and the difference values we generated. We included code later on of how to calculate the difference value based on the two within-subject conditions.
+```{r}
+SampleData$Doctor <- SampleData$Algorithm + SampleData$Difference
+
+describe(SampleData$Doctor)
+```
+### Density Plot Doctor Trust
+
+As you can see our data doesn't look abnormal other than a bit of kurtosis. The distribution is not skewed, and would pass most checks for most data scientists.
+```{r}
+ggplot(data = SampleData, aes(Doctor)) + geom_density(fill = "#568EA6") + theme_classic()
+```
+
+
+
+## Represting Difference in Data
+We wanted to recreate the difference data using the two conditions, that way you can follow the same steps with your own data. 
+Here you can see the difference values would be skewed, which may be the first instance of determining there may be something deeper to our data story about our data and our analyses results may be more complex. Most are not taught to do this, and even if they are would not look for the types of "Person as Effect Size" analyses we are proposing.
+```{r}
+SampleData$Difference <- SampleData$Doctor - SampleData$Algorithm
+
+describe(SampleData$Difference)
+```
+### Density Plot Doctor Trust
+```{r}
+ggplot(data = SampleData, aes(Difference)) + geom_density(fill = "#568EA6") + theme_classic()
+```
+
+This is just to create ID numbers for the rows for later.
+```{r}
+SampleData$PartNum <- 1:nrow(SampleData)
+```
+
+# Person As Effect Size
+
+The code to find the person as effect size distributions is not difficult and can be done with only a few lines, which I hope makes it easy to implement into other analyses in the future, even if its just for your curiosity of how the data may actually look. 
+This also includes code to get the percentages of the effect we found. As we manufactured data the percentage is intuitive based on our count but with other collected data this would give you the percentage of total.
+```{r}
+SampleData <- SampleData %>%
+  mutate(
+    EffectDirection  = case_when(
+      Doctor > Algorithm ~  1,
+      Doctor == Algorithm ~ 2,
+      Doctor < Algorithm ~ 3,
+      TRUE ~ NA_real_
+    )
+  )
+
+SampleData$EffectDirection <- recode_factor(SampleData$EffectDirection, `1` = "Positive", `2` = "No Change", `3` = "Negative")
+
+SampleCountTable <- table(SampleData$EffectDirection)
+SampleCountTable
+
+# Get Percentage of Distribution
+prop.table(SampleCountTable)
+```
+
+Again, the percent distribution matches our counts but this code is for percent rather than count so that way in more troublesome data sets or less intuitive distribution you will get a clear percentage.
+```{r}
+ggplot(data = SampleData, aes(EffectDirection, fill = EffectDirection)) +  geom_bar() + geom_text(stat = 'count', aes(label = (..count../sum(..count..)*100)), vjust = -.5) + ylim(0,100) + scale_fill_manual(values=c("#305F72", "#F1D1B5", "#F18C8E")) + theme_classic2()
+```
+Here is the distribution of differences based on the effect direction.
+```{r}
+ggplot(data = SampleData, aes(Difference, fill = EffectDirection)) + geom_density(aes(fill=EffectDirection), size = .6, alpha=.8) + scale_fill_manual(values=c("#305F72", "#F1D1B5", "#F18C8E"))  + theme_classic()
+```
+
+
+# Putting the Data Into Long Format
+```{r}
+SampleData_Long <- SampleData %>%
+  pivot_longer(
+    cols = c("Algorithm", "Doctor"),
+    names_to = 'Condition', 
+    values_to = 'Trust'
+  )
+
+SampleData_Long <- SampleData_Long %>%
+  mutate(
+  Cond = case_when(
+  Condition == "Algorithm" ~ 0,
+  Condition == "Doctor" ~ 1,
+  TRUE ~ NA_real_
+  )
+)
+```
+
+
+# Running The Analyses and Showing the Effects
+## T.Test
+
+For almost distributions we will find a significant effect.
+```{r}
+SampleData_Long %>%
+  t_test(Trust ~ Cond, paired = TRUE, detailed = TRUE)
+```
+## Cohen's D
+
+We would also find that we large sized effect size (at least in psychology based on Funder & Ozer, 2020) that hovers around -.3
+```{r}
+SampleData_Long %>%
+  cohens_d(Trust ~ Cond, paired = TRUE)
+```
+
+# Visualizing Data
+
+## Box Plot
+
+Though when you run it there may be a couple ourliers, what this will show is that the means are shifted.
+```{r}
+ggboxplot(SampleData_Long, x = "Condition", y = "Trust", 
+          color = "Condition", palette = c("#568EA6", "#F0B7A4"),
+          order = c("Algorithm", "Doctor"),
+          ylab = "Weight", xlab = "Groups")
+```
+
+## Paired Box Plot
+
+The story though is a bit more complex as the distribution of individual differences varies from positive to negative, this graph tells a more nuanced story than the pair-sample t-test and standard box and whisker plot we just ran.
+```{r}
+ggpaired(SampleData, cond1 = "Algorithm", cond2 = "Doctor",
+          color = "condition", line.color = "grey", line.size = 0.4, palette = "npg")
+```
+
+## Visualizing Difference
+
+### All
+
+This is showing the overlap of the the distribution of difference, colored in a way that is more readily understandable by those who look at it of how these effects actually are distributed. As we can see through the colors the majority of individuals would have no differences, rather than what we may have believed intuitively from the t-test that most individuals actually had a positive change. 
+
+Farther down I also included the distribution of the individual effect differences, visualizing Positive, No Change, and Negative changes.
+```{r}
+SampleData_Long$EffectDirection <- as.factor(SampleData_Long$EffectDirection)
+
+ggplot(data=SampleData_Long, aes(x=Cond, y=Trust, group=PartNum, color = EffectDirection)) +
+  geom_line() + geom_point() + scale_color_manual(values=c("#305F72", "#F1D1B5", "#F18C8E")) + theme_classic()
+```
+
+### Positive Difference Only (In Direction of Effect)
+```{r}
+
+ggplot(data=SampleData_Long, aes(x=Cond, y=Trust, group=PartNum, color = EffectDirection)) +
+  geom_line(data = subset(SampleData_Long, EffectDirection == "Positive")) + geom_point(data = subset(SampleData_Long, EffectDirection == "Positive")) + scale_color_manual(values="#305F72") + theme_classic()
+```
+
+### No Change
+```{r}
+
+ggplot(data=SampleData_Long, aes(x=Cond, y=Trust, group=PartNum, color = EffectDirection)) +
+  geom_line(data = subset(SampleData_Long, EffectDirection == "No Change")) + geom_point(data = subset(SampleData_Long, EffectDirection == "No Change")) + scale_color_manual(values= "#F1D1B5") + theme_classic()
+```
+
+### Negative Change (In Opposite Direction of Effect)
+```{r}
+
+ggplot(data=SampleData_Long, aes(x=Cond, y=Trust, group=PartNum, color = EffectDirection)) +
+  geom_line(data = subset(SampleData_Long, EffectDirection == "Negative")) + geom_point(data = subset(SampleData_Long, EffectDirection == "Negative")) + scale_color_manual(values= "#F18C8E") + theme_classic()
+```
+
+
+
+## Exporting CSV
+```{r}
+write_csv2(SampleData, "SampleData.csv")
+write_csv2(SampleData_Long, "SampleData_Long.csv")
+```
+
+
+Though these distributions show that more people had a positive change than a negative change, what the more accurate story is that most people had no change at all. Normally these extra analyses would not be done as part of the data evaluation process but knowing how many of these participants would have actually have no effect at all. 
+
+
+
